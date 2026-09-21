@@ -89,36 +89,23 @@ export function deleteProgramme(id) {
 
 export function saveStudent(input) {
   const existing = db.prepare('SELECT access_code FROM students WHERE id = ?').get(input.id)
+  const programme = db.prepare('SELECT name FROM programmes WHERE id = ?').get(input.programmeId)
+  const session = db.prepare('SELECT start_year FROM academic_sessions WHERE id = ?').get(input.sessionId)
+  if (!programme || !session) throw new Error('A valid programme and academic session are required.')
+  const programmeStudents = db.prepare('SELECT student_id, roll_number FROM students WHERE programme_id = ? AND session_id = ?').all(input.programmeId, input.sessionId)
+  const existingCode = programmeStudents.map(student => String(student.student_id).match(/^BCU\/([^/]+)\//)?.[1]).find(Boolean)
+  const normalizedProgrammeName = programme.name.toLowerCase()
+  const programmeCode = existingCode || (normalizedProgrammeName.includes('business administration') ? 'BBA' : normalizedProgrammeName.includes('information technology') ? 'BSIT' : normalizedProgrammeName.includes('computer science') ? 'BSC' : programme.name.split(/\s+/).filter(Boolean).map(word => word.replace(/[^A-Za-z]/g, '')).filter(Boolean).slice(-2).map(word => word[0].toUpperCase()).join('') || 'ST')
+  const yearCode = String(session.start_year).slice(-2)
+  const registrationPattern = new RegExp(`^BCU/${programmeCode}/${yearCode}/(\\d+)$`)
+  const nextSequence = Math.max(0, ...programmeStudents.map(student => Number(String(student.student_id).match(registrationPattern)?.[1] ?? 0)), ...programmeStudents.map(student => Number(String(student.roll_number).match(new RegExp(`^${programmeCode}-${yearCode}(\\d+)$`))?.[1] ?? 0))) + 1
+  const generatedStudentId = `BCU/${programmeCode}/${yearCode}/${String(nextSequence).padStart(3, '0')}`
+  const generatedRollNumber = `${programmeCode}-${yearCode}${String(nextSequence).padStart(2, '0')}`
   const accessCode = input.accessCode || existing?.access_code || `BC-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
-  let studentId = input.studentId
-  let rollNumber = input.rollNumber
-  if (!studentId || !rollNumber) {
-    const programme = db.prepare('SELECT name FROM programmes WHERE id = ?').get(input.programmeId)
-    const session = db.prepare('SELECT start_year FROM academic_sessions WHERE id = ?').get(input.sessionId)
-    if (!programme || !session) throw new Error('A valid programme and academic session are required to generate student numbers.')
-    const prefix = programmePrefix(programme.name)
-    const year = String(session.start_year)
-    let sequence = 1
-    do {
-      const suffix = String(sequence).padStart(3, '0')
-      studentId = `${prefix}/${year}/${suffix}`
-      rollNumber = `${prefix}-${year.slice(-2)}${suffix}`
-      sequence += 1
-    } while (db.prepare('SELECT 1 FROM students WHERE student_id = ? OR roll_number = ?').get(studentId, rollNumber))
-  }
   db.prepare(`INSERT INTO students (id, student_id, roll_number, name, email, access_code, phone, programme_id, current_semester, session_id, status, enrolled_at)
     VALUES (@id, @studentId, @rollNumber, @name, @email, @accessCode, @phone, @programmeId, @currentSemester, @sessionId, @status, @enrolledAt)
-    ON CONFLICT(id) DO UPDATE SET student_id = excluded.student_id, roll_number = excluded.roll_number, name = excluded.name, email = excluded.email, access_code = excluded.access_code, phone = excluded.phone, programme_id = excluded.programme_id, current_semester = excluded.current_semester, session_id = excluded.session_id, status = excluded.status, enrolled_at = excluded.enrolled_at`).run({ ...input, studentId, rollNumber, accessCode })
+    ON CONFLICT(id) DO UPDATE SET student_id = excluded.student_id, roll_number = excluded.roll_number, name = excluded.name, email = excluded.email, access_code = excluded.access_code, phone = excluded.phone, programme_id = excluded.programme_id, current_semester = excluded.current_semester, session_id = excluded.session_id, status = excluded.status, enrolled_at = excluded.enrolled_at`).run({ ...input, studentId: input.studentId || generatedStudentId, rollNumber: input.rollNumber || generatedRollNumber, accessCode })
   return db.prepare('SELECT * FROM students WHERE id = ?').get(input.id)
-}
-
-function programmePrefix(name) {
-  const normalized = name.toLowerCase()
-  if (normalized.includes('business administration')) return 'BBA'
-  if (normalized.includes('information technology')) return 'BSIT'
-  if (normalized.includes('computer science')) return 'BSC'
-  const words = name.toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(word => word && !['OF', 'IN', 'AND', 'THE'].includes(word))
-  return (words.length ? words.map(word => word[0]).join('') : 'STU').slice(0, 6)
 }
 
 export function deleteStudent(id) {
