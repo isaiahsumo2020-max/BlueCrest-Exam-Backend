@@ -4,8 +4,8 @@ import express from 'express'
 import helmet from 'helmet'
 import { closeDatabase, db } from './db/database.js'
 import { issueToken, requireAuth, requirePermission, requireRole } from './auth.js'
-import { loginSchema, marksSchema, programmeSchema, resultSchema, resultStatusSchema, semesterSchema, sessionSchema, studentSchema, subjectSchema, userSchema, validate } from './validation.js'
-import { deleteProgramme, deleteSemester, deleteSession, deleteStudent, deleteSubject, findUser, list, recordAudit, saveMarks, saveProgramme, saveResult, saveSemester, saveSession, saveStudent, saveSubject, saveUser, updateResultStatus } from './repositories/erpRepository.js'
+import { auditIdSchema, loginSchema, marksSchema, programmeSchema, resultSchema, resultStatusSchema, semesterSchema, sessionSchema, studentSchema, subjectSchema, userSchema, validate } from './validation.js'
+import { deleteAuditLog, deleteProgramme, deleteSemester, deleteSession, deleteStudent, deleteSubject, findUser, isProtectedSuperAdmin, list, recordAudit, saveMarks, saveProgramme, saveResult, saveSemester, saveSession, saveStudent, saveSubject, saveUser, updateResultStatus } from './repositories/erpRepository.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3001)
@@ -38,7 +38,16 @@ app.get('/api/:entity', requireAuth, (request, response) => {
 })
 
 app.post('/api/users', requireAuth, requireRole('admin'), validate(userSchema), (request, response) => {
-  try { const data = saveUser(request.body); recordAudit(request.user, 'USER_SAVE', 'User', { id: data.id }); return response.status(200).json({ data }) } catch (error) { return response.status(400).json({ message: error instanceof Error ? error.message : 'Unable to save user.' }) }
+  try {
+    if (isProtectedSuperAdmin(request.body.id) && request.user.sub !== request.body.id) return response.status(403).json({ message: 'The superadmin account cannot be edited by another administrator.' })
+    const data = saveUser(request.body)
+    recordAudit(request.user, 'USER_SAVE', 'User', { id: data.id })
+    return response.status(200).json({ data })
+  } catch (error) { return response.status(400).json({ message: error instanceof Error ? error.message : 'Unable to save user.' }) }
+})
+
+app.delete('/api/audit/:id', requireAuth, requireRole('admin'), (request, response) => {
+  try { const parsed = auditIdSchema.safeParse(request.params); if (!parsed.success) return response.status(400).json({ message: 'Invalid audit record ID.' }); deleteAuditLog(parsed.data.id); return response.status(204).send() } catch (error) { return response.status(400).json({ message: error instanceof Error ? error.message : 'Unable to delete audit record.' }) }
 })
 
 app.post('/api/results', requireAuth, requirePermission('reports'), validate(resultSchema), (request, response) => {

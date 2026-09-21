@@ -33,6 +33,15 @@ export function saveUser(input) {
   return publicUser(db.prepare('SELECT id, name, email, role, permissions_json, status, created_at FROM users WHERE id = ?').get(input.id))
 }
 
+export function isProtectedSuperAdmin(userId) {
+  return userId === (process.env.SUPERADMIN_ID || 'u1')
+}
+
+export function deleteAuditLog(id) {
+  const result = db.prepare('DELETE FROM audit_logs WHERE id = ?').run(id)
+  if (!result.changes) throw new Error('Audit record not found.')
+}
+
 export function recordAudit(user, action, entity, details) {
   try {
     db.prepare('INSERT INTO audit_logs (id, user_id, user_name, action, entity, details, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)').run(crypto.randomUUID(), user.id, user.name, action, entity, JSON.stringify(details), new Date().toISOString())
@@ -101,7 +110,10 @@ export function saveStudent(input) {
   const nextSequence = Math.max(0, ...programmeStudents.map(student => Number(String(student.student_id).match(registrationPattern)?.[1] ?? 0)), ...programmeStudents.map(student => Number(String(student.roll_number).match(new RegExp(`^${programmeCode}-${yearCode}(\\d+)$`))?.[1] ?? 0))) + 1
   const generatedStudentId = `BCU/${programmeCode}/${yearCode}/${String(nextSequence).padStart(3, '0')}`
   const generatedRollNumber = `${programmeCode}-${yearCode}${String(nextSequence).padStart(2, '0')}`
-  const accessCode = input.accessCode || existing?.access_code || `BC-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+  let accessCode = input.accessCode || existing?.access_code
+  if (!accessCode) {
+    do { accessCode = `BC-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}` } while (db.prepare('SELECT 1 FROM students WHERE access_code = ?').get(accessCode))
+  }
   db.prepare(`INSERT INTO students (id, student_id, roll_number, name, email, access_code, phone, programme_id, current_semester, session_id, status, enrolled_at)
     VALUES (@id, @studentId, @rollNumber, @name, @email, @accessCode, @phone, @programmeId, @currentSemester, @sessionId, @status, @enrolledAt)
     ON CONFLICT(id) DO UPDATE SET student_id = excluded.student_id, roll_number = excluded.roll_number, name = excluded.name, email = excluded.email, access_code = excluded.access_code, phone = excluded.phone, programme_id = excluded.programme_id, current_semester = excluded.current_semester, session_id = excluded.session_id, status = excluded.status, enrolled_at = excluded.enrolled_at`).run({ ...input, studentId: input.studentId || generatedStudentId, rollNumber: input.rollNumber || generatedRollNumber, accessCode })
