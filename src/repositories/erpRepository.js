@@ -1,24 +1,44 @@
+import crypto from 'node:crypto'
 import { db } from '../db/database.js'
+import { hashPassword, verifyPassword } from '../auth.js'
 
 export function list(entity) {
   const queries = { users: 'SELECT id, name, email, role, permissions_json, status, created_at FROM users ORDER BY name', programmes: 'SELECT * FROM programmes ORDER BY name', sessions: 'SELECT * FROM academic_sessions ORDER BY start_year DESC', semesters: 'SELECT * FROM semesters ORDER BY session_id, programme_id, number', subjects: 'SELECT * FROM subjects ORDER BY code', students: 'SELECT * FROM students ORDER BY name', marks: 'SELECT * FROM marks_entries ORDER BY updated_at DESC', results: 'SELECT * FROM semester_results ORDER BY id', 'grade-rules': 'SELECT * FROM grade_rules ORDER BY min_marks DESC', audit: 'SELECT * FROM audit_logs ORDER BY timestamp DESC' }
   return db.prepare(queries[entity]).all()
 }
 
+function publicUser(user) {
+  if (!user) return null
+  return { id: user.id, name: user.name, email: user.email, role: user.role, permissions_json: user.permissions_json, permissions: JSON.parse(user.permissions_json || '[]'), status: user.status, created_at: user.created_at }
+}
+
 export function findUser(email, password) {
-  return db.prepare("SELECT id, name, email, role, permissions_json, status, created_at FROM users WHERE email = ? AND password = ? AND status = 'active'").get(email, password)
+  const user = db.prepare("SELECT id, name, email, password, role, permissions_json, status, created_at FROM users WHERE email = ? AND status = 'active'").get(email)
+  if (!user || !verifyPassword(password, user.password)) return null
+  if (!user.password.startsWith('$2')) db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), user.id)
+  return publicUser(user)
 }
 
 export function saveUser(input) {
   const existing = db.prepare('SELECT password FROM users WHERE id = ?').get(input.id)
+  const password = input.password ? hashPassword(input.password) : existing?.password
+  if (!password) throw new Error('A password is required when creating a user.')
   db.prepare(`INSERT INTO users (id, name, email, password, role, permissions_json, status, created_at)
     VALUES (@id, @name, @email, @password, @role, @permissions, @status, @createdAt)
     ON CONFLICT(id) DO UPDATE SET name = excluded.name, email = excluded.email, password = excluded.password, role = excluded.role, permissions_json = excluded.permissions_json, status = excluded.status`).run({
     ...input,
-    password: input.password || existing?.password || '',
+    password,
     permissions: JSON.stringify(input.permissions ?? []),
   })
-  return db.prepare('SELECT id, name, email, role, permissions_json, status, created_at FROM users WHERE id = ?').get(input.id)
+  return publicUser(db.prepare('SELECT id, name, email, role, permissions_json, status, created_at FROM users WHERE id = ?').get(input.id))
+}
+
+export function recordAudit(user, action, entity, details) {
+  try {
+    db.prepare('INSERT INTO audit_logs (id, user_id, user_name, action, entity, details, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)').run(crypto.randomUUID(), user.id, user.name, action, entity, JSON.stringify(details), new Date().toISOString())
+  } catch (error) {
+    console.error('Audit log write failed:', error instanceof Error ? error.message : error)
+  }
 }
 
 export function saveResult(input) {
@@ -28,20 +48,23 @@ export function saveResult(input) {
   return db.prepare('SELECT * FROM semester_results WHERE student_id = ? AND semester_id = ?').get(input.studentId, input.semesterId)
 }
 
-export function updateResultStatus(input) {
+export function updateResultStatus(input, actorId) {
   const existing = db.prepare('SELECT * FROM semester_results WHERE id = ?').get(input.resultId)
   if (!existing) throw new Error('Result not found')
-  db.prepare(`UPDATE semester_results SET publication_status = @publicationStatus, approved_by = COALESCE(@approvedBy, approved_by), approved_at = COALESCE(@approvedAt, approved_at), published_at = COALESCE(@publishedAt, published_at) WHERE id = @resultId`).run(input)
+  db.prepare(`UPDATE semester_results SET publication_status = @publicationStatus, approved_by = CASE WHEN @publicationStatus = 'approved' THEN @actorId ELSE approved_by END, approved_at = CASE WHEN @publicationStatus = 'approved' THEN COALESCE(@approvedAt, @now) ELSE approved_at END, published_at = CASE WHEN @publicationStatus = 'published' THEN COALESCE(@publishedAt, @now) ELSE published_at END WHERE id = @resultId`).run({ ...input, actorId, now: new Date().toISOString() })
   return db.prepare('SELECT * FROM semester_results WHERE id = ?').get(input.resultId)
 }
 
-export function saveMarks(input) {
+export function saveMarks(input, actorId) {
   const subject = db.prepare('SELECT components_json, pass_mark FROM subjects WHERE id = ?').get(input.subjectId)
   if (!subject) throw new Error('Subject not found')
   const configuredComponents = JSON.parse(subject.components_json)
   const missing = configuredComponents.filter(component => input.components?.[component.name] === undefined || input.components?.[component.name] === null || input.components?.[component.name] === '')
   if (missing.length) throw new Error(`Missing marks for: ${missing.map(component => component.name).join(', ')}`)
-  const total = configuredComponents.reduce((sum, component) => sum + Math.max(0, Math.min(component.maxMarks, Number(input.components[component.name]))), 0)
+  const values = configuredComponents.map(component => Number(input.components[component.name]))
+  if (values.some(value => !Number.isFinite(value) || value < 0)) throw new Error('Marks must be valid non-negative numbers.')
+  if (values.some((value, index) => value > configuredComponents[index].maxMarks)) throw new Error('Marks cannot exceed configured component maximums.')
+  const total = values.reduce((sum, value) => sum + value, 0)
   const maxTotal = configuredComponents.reduce((sum, component) => sum + component.maxMarks, 0)
   const percentage = maxTotal ? Math.round(total / maxTotal * 100) : 0
   const rule = db.prepare('SELECT grade, grade_point, pass_status FROM grade_rules WHERE ? BETWEEN min_marks AND max_marks LIMIT 1').get(percentage)
@@ -49,7 +72,7 @@ export function saveMarks(input) {
   const now = new Date().toISOString()
   db.prepare(`INSERT INTO marks_entries (id, student_id, subject_id, semester_id, session_id, components_json, total_marks, percentage, grade, grade_point, status, entered_by, entered_at, updated_at)
     VALUES (@id, @studentId, @subjectId, @semesterId, @sessionId, @components, @total, @percentage, @grade, @gradePoint, @status, @enteredBy, @now, @now)
-    ON CONFLICT(student_id, subject_id, semester_id) DO UPDATE SET components_json = excluded.components_json, total_marks = excluded.total_marks, percentage = excluded.percentage, grade = excluded.grade, grade_point = excluded.grade_point, status = excluded.status, updated_at = excluded.updated_at`).run({ id: input.id, studentId: input.studentId, subjectId: input.subjectId, semesterId: input.semesterId, sessionId: input.sessionId, components: JSON.stringify(input.components), total, percentage, grade: rule.grade, gradePoint: rule.grade_point, status: rule.pass_status, enteredBy: input.enteredBy, now })
+    ON CONFLICT(student_id, subject_id, semester_id) DO UPDATE SET components_json = excluded.components_json, total_marks = excluded.total_marks, percentage = excluded.percentage, grade = excluded.grade, grade_point = excluded.grade_point, status = excluded.status, entered_by = excluded.entered_by, updated_at = excluded.updated_at`).run({ id: input.id, studentId: input.studentId, subjectId: input.subjectId, semesterId: input.semesterId, sessionId: input.sessionId, components: JSON.stringify(input.components), total, percentage, grade: rule.grade, gradePoint: rule.grade_point, status: rule.pass_status, enteredBy: actorId, now })
   return db.prepare('SELECT * FROM marks_entries WHERE student_id = ? AND subject_id = ? AND semester_id = ?').get(input.studentId, input.subjectId, input.semesterId)
 }
 
