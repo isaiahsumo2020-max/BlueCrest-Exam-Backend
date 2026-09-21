@@ -1,0 +1,19 @@
+{
+  "name": "university-examination-erp-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "db:init": "node --disable-warning=ExperimentalWarning src/db/init.js",
+    "db:seed": "node --disable-warning=ExperimentalWarning src/db/seed.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {}
+}
