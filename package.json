@@ -6,14 +6,12 @@
   "engines": {
     "node": ">=22.5.0"
   },
-  "engines": {
-    "node": ">=22.5.0"
-  },
   "scripts": {
     "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "db:init": "node --disable-warning=ExperimentalWarning src/db/init.js",
-    "db:seed": "node --disable-warning=ExperimentalWarning src/db/seed.js"
+    "db:seed": "node --disable-warning=ExperimentalWarning src/db/seed.js",
+    "db:migrate:sqlite": "node --disable-warning=ExperimentalWarning src/db/migrate-sqlite-to-postgres.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -22,6 +20,8 @@
     "express": "^5.1.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "pg": "^8.23.0",
     "zod": "^3.24.2"
   }
 }

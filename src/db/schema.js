@@ -1,11 +1,10 @@
 export const schema = `
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
+  profile_picture TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL CHECK (role IN ('admin', 'staff')),
   permissions_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
@@ -28,4 +27,14 @@ CREATE TABLE IF NOT EXISTS grade_rules (grade TEXT PRIMARY KEY, min_marks INTEGE
 CREATE TABLE IF NOT EXISTS marks_entries (id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id), subject_id TEXT NOT NULL REFERENCES subjects(id), semester_id TEXT NOT NULL REFERENCES semesters(id), session_id TEXT NOT NULL REFERENCES academic_sessions(id), components_json TEXT NOT NULL, total_marks REAL NOT NULL, percentage REAL NOT NULL, grade TEXT NOT NULL REFERENCES grade_rules(grade), grade_point REAL NOT NULL, status TEXT NOT NULL CHECK (status IN ('pass', 'fail')), entered_by TEXT NOT NULL REFERENCES users(id), entered_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(student_id, subject_id, semester_id));
 CREATE TABLE IF NOT EXISTS semester_results (id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id), semester_id TEXT NOT NULL REFERENCES semesters(id), session_id TEXT NOT NULL REFERENCES academic_sessions(id), gpa REAL NOT NULL, cgpa REAL NOT NULL, total_credits INTEGER NOT NULL, earned_credits INTEGER NOT NULL, overall_status TEXT NOT NULL CHECK (overall_status IN ('pass', 'fail')), publication_status TEXT NOT NULL CHECK (publication_status IN ('draft', 'approved', 'published')), approved_by TEXT REFERENCES users(id), approved_at TEXT, published_at TEXT, UNIQUE(student_id, semester_id));
 CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), user_name TEXT NOT NULL, action TEXT NOT NULL, entity TEXT NOT NULL, details TEXT NOT NULL, timestamp TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS school_settings (
+  id TEXT PRIMARY KEY,
+  school_name TEXT NOT NULL DEFAULT 'BlueCrest University',
+  school_name_slug TEXT NOT NULL DEFAULT 'bluecrest-university',
+  school_logo TEXT NOT NULL DEFAULT '/images/BlueCrest University.png',
+  school_logo_slug TEXT NOT NULL DEFAULT 'bluecrest-university',
+  profile_picture TEXT NOT NULL DEFAULT '/images/BlueCrest University.png',
+  profile_picture_slug TEXT NOT NULL DEFAULT 'bluecrest-university',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `

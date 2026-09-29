@@ -1,0 +1,2 @@
+ALTER TABLE public.users
+  ADD COLUMN IF NOT EXISTS profile_picture TEXT NOT NULL DEFAULT '';
